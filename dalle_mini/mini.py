@@ -17,6 +17,7 @@ from vqgan_jax.modeling_flax_vqgan import VQModel
 from functools import partial
 from flax.training.common_utils import shard_prng_key
 from PIL import Image
+from tqdm import tqdm
 
 DALLE_MODEL = "dalle-mini/dalle-mini/mega-1-fp16:latest"
 # DALLE_MODEL = "/home/t36668/.cache/huggingface/hub/models--dalle-mini--dalle-mini"
@@ -58,9 +59,6 @@ def p_generate(
 def p_decode(indices, params):
     return vqgan.decode_code(indices, params=params)
 
-# create a random key
-SEED = random.randint(0, 2**32 - 1)
-KEY = jax.random.PRNGKey(SEED)
 
 processor = DalleBartProcessor.from_pretrained(DALLE_MODEL, revision=DALLE_COMMIT_ID)
 
@@ -74,7 +72,7 @@ def get_image(prompt_string="Sonic caught by the camera", output_dir="exp/img"):
     tokenized_prompt = replicate(tokenized_prompts)
 
     # number of predictions per prompt
-    n_predictions = 1
+    n_predictions = 9
 
     # We can customize generation parameters (see https://huggingface.co/blog/how-to-generate)
     gen_top_k = None
@@ -86,27 +84,30 @@ def get_image(prompt_string="Sonic caught by the camera", output_dir="exp/img"):
     # generate images
     images = []
     # for i in trange(max(n_predictions // jax.device_count(), 1)):
-    # get a new key
-    key, subkey = jax.random.split(KEY)
-    # generate images
-    encoded_images = p_generate(
-        tokenized_prompt,
-        shard_prng_key(subkey),
-        params,
-        gen_top_k,
-        gen_top_p,
-        temperature,
-        cond_scale,
-    )
-    # remove BOS
-    encoded_images = encoded_images.sequences[..., 1:]
-    # decode images
-    decoded_images = p_decode(encoded_images, vqgan_params)
-    decoded_images = decoded_images.clip(0.0, 1.0).reshape((-1, 256, 256, 3))
-    for idx, decoded_img in enumerate(decoded_images):
-        img = Image.fromarray(np.asarray(decoded_img * 255, dtype=np.uint8))
+    for idxx in tqdm(range(n_predictions)):
+        # create a random key
+        seed = random.randint(0, 2**32 - 1)
+        keys = jax.random.PRNGKey(seed)
+        key, subkey = jax.random.split(keys)
+        # generate images
+        encoded_images = p_generate(
+            tokenized_prompt,
+            shard_prng_key(subkey),
+            params,
+            gen_top_k,
+            gen_top_p,
+            temperature,
+            cond_scale,
+        )
+        # remove BOS
+        encoded_images = encoded_images.sequences[..., 1:]
+        # decode images
+        decoded_images = p_decode(encoded_images, vqgan_params)
+        decoded_images = decoded_images.clip(0.0, 1.0).reshape((-1, 256, 256, 3))
+        for idx, decoded_img in enumerate(decoded_images):
+            img = Image.fromarray(np.asarray(decoded_img * 255, dtype=np.uint8))
         images.append(img)
-        img.save(os.path.join(output_dir, "{}.png".format(idx)), "PNG")
+        img.save(os.path.join(output_dir, "{}_{}.png".format(idxx, idx)), "PNG")
 
 if __name__ == "__main__":
     get_image()
